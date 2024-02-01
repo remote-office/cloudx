@@ -1,0 +1,21 @@
+{
+	"name" : "cloudx/cloudx",
+	"description" : "Pure PHP Cloud Processing Library",
+	"type" : "library",
+	"license" : "MIT",
+	"authors" : [{
+			"name" : "David Betgen",
+			"email" : "d.betgen@remote-office.nl"
+		}
+	],
+	"minimum-stability" : "stable",
+	"require" : {
+		"php" : ">=5.6.0",
+		"libx/libx" : "*"
+	},
+	"autoload" : {
+		"psr-4" : {
+			"CloudX\\" : "src/"
+		}
+	}
+}
