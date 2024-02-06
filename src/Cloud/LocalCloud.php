@@ -16,7 +16,7 @@ use CloudX\Messages\CallbackMessage;
 /**
  * Class LocalCloud
  *
- * @author David Betgen <d.betgen@remote-office.nl>
+ * @author David Betgen <code@platform-x.dev>
  * @version 1.0
  */
 class LocalCloud extends Cloud
@@ -53,6 +53,20 @@ class LocalCloud extends Cloud
     }
 
     /**
+     * Start this Cloud
+     *
+     * @param void
+     * @return void
+     */
+    public function start()
+    {
+        $manager = Manager::getInstance();
+
+        while($manager->getRunners()->sizeOf() < $this->capacity)
+            $manager->add($manager->create());
+    }
+
+    /**
      * Stop this Cloud
      *
      * @param void
@@ -68,10 +82,10 @@ class LocalCloud extends Cloud
             $runner->stop();
         }
 
+        $this->wait();
+
         // Remove all runners from manager
         $manager->getRunners()->clear();
-
-        $this->wait();
     }
 
     /**
@@ -143,7 +157,7 @@ class LocalCloud extends Cloud
             $runners->next();
         }
 
-        // When no runner is available and cloud runner limit is not reached add a runner
+        /*// When no runner is available and cloud runner limit is not reached add a runner
         if(!$available)
         {
             if($manager->getRunners()->sizeOf() < $this->capacity)
@@ -151,7 +165,7 @@ class LocalCloud extends Cloud
                 $manager->add($manager->create());
                 $available = true;
             }
-        }
+        }*/
 
         return $available;
     }

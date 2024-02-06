@@ -7,7 +7,7 @@
   /**
    * Class Manager
    *
-   * @author David Betgen <d.betgen@remote-office.nl>
+   * @author David Betgen <code@platform-x.dev>
    * @version 1.0
    */
   class Manager

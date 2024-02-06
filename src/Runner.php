@@ -10,22 +10,25 @@
   use CloudX\Messages\LogMessage;
   use CloudX\Messages\KeepAliveMessage;
   use CloudX\Messages\CallbackMessage;
+  use CloudX\Messages\CommandMessage;
   
   use Socket;
 
   /**
    * Class Runner
    *
-   * @author David Betgen <d.betgen@remote-office.nl>
+   * @author David Betgen <code@platform-x.dev>
    * @version 1.0
    */
   class Runner
   {
-    const IDLE      = 0;
     const STARTING  = 1;
-    const RUNNING   = 2;
-    const STOPPING  = 3;
-    const STOPPED   = 4;
+    const STARTED   = 2;
+    const STOPPING  = 4;
+    const STOPPED   = 5;
+
+    const RUNNING   = 3;
+    const IDLE      = 0;
 
     protected $id;
     protected $name;
@@ -62,7 +65,7 @@
       $this->setName($name);
 
       // Set initial status
-      $this->setStatus(Runner::IDLE);
+      $this->setStatus(Runner::STARTING);
 
       // Create shared memory (64KB)
       $this->memory = null; //new Memory(1024 * 64);
@@ -125,6 +128,8 @@
         pcntl_signal(SIGHUP,  array($this, 'signal'));
 
         register_tick_function(array($this, 'tick'));
+
+        $this->setStatus(Runner::STARTED);
       }
     }
 
@@ -173,7 +178,18 @@
 
                   if($class instanceof StatusMessage)
                   {
-                    $this->terminate = true;
+                    // Get status (Runner::STOPPED or Runner::IDLE)
+                    $status = $class->getStatus();
+
+                    if($status === Runner::STOPPING)
+                      $this->terminate = true;
+                  }
+
+                  if($class instanceof CommandMessage)
+                  {
+                    // Get command 
+                    $command = $class->getCommand();
+
                   }
                 }
               }
@@ -417,7 +433,7 @@
     public function stop()
     {
       // Create a StatusMessage
-      $statusMessage = new StatusMessage($this->getPid(), Runner::STOPPED);
+      $statusMessage = new StatusMessage($this->getPid(), Runner::STOPPING);
 
       // Serialize
       $data = serialize($statusMessage);
@@ -607,20 +623,32 @@
      */
     public function idle()
     {
-      while(true)
-      {
+      // Enter idle loop
+      $this->setStatus(Runner::IDLE);
 
-        // Handle signals in signal "queue"
-        foreach($this->signals as $key => $signal)
+      // Start idle timer
+      $timer = time();
+
+      while(!$this->terminate)
+      {
+        // Check signal queue
+        if(count($this->signals) > 0)
         {
-          unset($this->signals[$key]);
-          $this->handle($signal);
+          $signals = $this->signals;
+          $this->signals = [];
+
+          // Handle signals in signal "queue"
+          foreach($signals as $key => $signal)
+            $this->handle($signal);
         }
 
         if($this->hasRunnable())
         {
           $runnable = $this->getRunnable();
-          $runnable->run($this);
+          $runnable->run();
+
+          // Reset idle timer
+          $timer = time();
 
           // Clear runnable
           $this->setRunnable();
@@ -634,11 +662,9 @@
 
           //pcntl_signal_dispatch();
         }
-
-        // Check on terminate
-        if($this->terminate)
-          exit;
       }
+      
+      exit;
     }
 
     public function output($output)
