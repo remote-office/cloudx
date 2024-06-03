@@ -1,6 +1,6 @@
 <?php
 
-	namespace CloudX;
+  namespace CloudX;
 
   use CloudX\Interfaces\Runnable;
 
@@ -119,98 +119,86 @@
         // Set PID of this runner
         $this->setPid(posix_getpid());
 
-        pcntl_async_signals(TRUE);
+        //pcntl_async_signals(TRUE);
 
         // ReInstall signalhandler on important POSIX signals
-        pcntl_signal(SIGUSR2, array($this, 'signal'));
-        pcntl_signal(SIGTERM, array($this, 'signal'));
-        pcntl_signal(SIGINT,  array($this, 'signal'));
-        pcntl_signal(SIGHUP,  array($this, 'signal'));
-
-        register_tick_function(array($this, 'tick'));
+        //pcntl_signal(SIGUSR2, array($this, 'signal'));
+        //pcntl_signal(SIGTERM, array($this, 'signal'));
+        //pcntl_signal(SIGINT,  array($this, 'signal'));
+        //pcntl_signal(SIGHUP,  array($this, 'signal'));
 
         $this->setStatus(Runner::STARTED);
       }
     }
 
-    public function tick()
+    /**
+     * Process received data
+     * 
+     * @param string $data
+     * @return void
+     */
+    private function process($data)
     {
-      pcntl_signal_dispatch();
-    }
-
-
-    public function handle($signal)
-    {
-      //echo __METHOD__  . ' ' . $signal . "\n";
-
-      // Handle signal
-      switch($signal)
+      if(!empty($data))
       {
-        // Signal when a parent has send a message
-        case SIGUSR2:
+        // Unserialize Message
+        $class = unserialize($data);
+
+        if(in_array(Message::class, class_parents($class)))
+        {
+          // Get pid of message
+          $pid = $class->getPid();
+
+          if($class instanceof RunnableMessage)
           {
-            // Gather sockets
-            $sockets = array($this->getSocket());
+            // Set it
+            $this->setRunnable($class->getRunnable());
+          }
 
-            // Select
-            @socket_select($sockets, $null, $null, 5);
+          if($class instanceof StatusMessage)
+          {
+            // Get status (Runner::STOPPED or Runner::IDLE)
+            $status = $class->getStatus();
 
-            // Do we have something to read
-            if(count($sockets) > 0)
+            if($status === Runner::STOPPING)
             {
-              $data = $this->read();
+              //echo "\n\n";
+              //echo '!@#$%^&*() It was a PLEASURE! ' . "\n";
+              //echo "\n\n";
 
-              if(!empty($data))
-              {
-                // Unserialize Message
-                $class = unserialize($data);
-
-                if(in_array(Message::class, class_parents($class)))
-                {
-                  // Get pid of message
-                  $pid = $class->getPid();
-
-                  if($class instanceof RunnableMessage)
-                  {
-                    // Set it
-                    $this->setRunnable($class->getRunnable());
-                  }
-
-                  if($class instanceof StatusMessage)
-                  {
-                    // Get status (Runner::STOPPED or Runner::IDLE)
-                    $status = $class->getStatus();
-
-                    if($status === Runner::STOPPING)
-                      $this->terminate = true;
-                  }
-
-                  if($class instanceof CommandMessage)
-                  {
-                    // Get command 
-                    $command = $class->getCommand();
-
-                  }
-                }
-              }
+              $this->terminate = true;
             }
           }
-          break;
 
-        case SIGTERM:
-        case SIGINT:
+          if($class instanceof CommandMessage)
           {
-            // Handle sigterm and sigint
-            exit();
+            // Get command 
+            $command = $class->getCommand();
           }
-          break;
-
-        case SIGHUP:
-          {
-            echo 'Hi there... stop poking me!' . "\n";
-          }
-          break;
+        }
       }
+      else
+      {
+        //echo 'No data to read... ' . "\n";
+
+        exit;
+      }
+    }
+
+    protected function listen()
+    {
+      // Zend engine limitation fix
+      $null = null;
+
+      // Gather sockets
+      $sockets = array($this->getSocket());
+
+      // Select
+      @socket_select($sockets, $null, $null, 1);
+
+      // Do we have something to read
+      if(count($sockets) > 0)
+        $this->process($this->read());
     }
 
     /**
@@ -221,9 +209,23 @@
      */
     public function signal($signal)
     {
-      // Add signal to stack
-      $this->signals[] = $signal;
+        // Handle signal
+        switch($signal)
+        {
+            case SIGTERM:
+            case SIGINT:
+            {
+                // Handle sigterm and sigint
+                exit();
+            }
+            break;
 
+            case SIGHUP:
+            {
+                echo 'Hi there... stop poking me!' . "\n";
+            }
+            break;
+        }
     }
 
     public function __destruct()
@@ -372,10 +374,10 @@
 
     public function setStatus($status)
     {
-    	// When in child inform parent of status change
-    	if($this->getParentPid() != 0)
-    	{
-    		// Create a StatusMessage
+      // When in child inform parent of status change
+      if($this->getParentPid() != 0)
+      {
+        // Create a StatusMessage
         $statusMessage = new StatusMessage($this->getPid(), $status);
 
         // Serialize
@@ -385,8 +387,8 @@
         $this->write($data);
 
         // Notify parent
-        posix_kill($this->getParentPid(), SIGUSR1);
-    	}
+        //posix_kill($this->getParentPid(), SIGUSR1);
+      }
 
       $this->status = $status;
     }
@@ -438,11 +440,14 @@
       // Serialize
       $data = serialize($statusMessage);
 
+
+      //echo 'Stop: ' . $data . "\n";
+
       // Write
       $this->write($data);
  
       // Notify child
-      posix_kill($this->getPid(), SIGUSR2);
+      //posix_kill($this->getPid(), SIGUSR2);
 
       // Close socket
       //socket_close($this->getSocket());
@@ -467,9 +472,6 @@
 
       // Write to other process
       $this->write($data);
-
-      // Notify child
-      posix_kill($this->getPid(), SIGUSR2);
     }
 
     /**
@@ -488,9 +490,6 @@
 
       // Write to other process
       $this->write($data);
-
-      // Notify parent
-      posix_kill($this->getParentPid(), SIGUSR1);
     }
 
     /**
@@ -501,21 +500,18 @@
      */
     public function keepalive()
     {
-    	// When in child
-    	if($this->getParentPid() != 0)
-    	{
-	    	// Create a KeepAliveMessage
-	      $keepAliveMessage = new KeepAliveMessage($this->getPid());
+      // When in child
+      if($this->getParentPid() != 0)
+      {
+        // Create a KeepAliveMessage
+        $keepAliveMessage = new KeepAliveMessage($this->getPid());
 
-	      // Serialize
-	      $data = serialize($keepAliveMessage);
+        // Serialize
+        $data = serialize($keepAliveMessage);
 
-	      // Write
-	      $this->write($data);
-
-	      // Notify parent
-	      posix_kill($this->getParentPid(), SIGUSR1);
-    	}
+        // Write
+        $this->write($data);
+      }
     }
 
     /**
@@ -526,21 +522,18 @@
      */
     public function log($log)
     {
-    	// When in child
-    	if($this->getParentPid() != 0)
-    	{
-	    	// Create a LogMessage
-	      $logMessage = new LogMessage($this->getPid(), $log);
+      // When in child
+      if($this->getParentPid() != 0)
+      {
+        // Create a LogMessage
+        $logMessage = new LogMessage($this->getPid(), $log);
 
-	      // Serialize
-	      $data = serialize($logMessage);
+        // Serialize
+        $data = serialize($logMessage);
 
-	      // Write
-	      $this->write($data);
-
-	      // Notify parent
-	      posix_kill($this->getParentPid(), SIGUSR1);
-    	}
+        // Write
+        $this->write($data);
+      }
     }
 
     /**
@@ -570,6 +563,8 @@
 
         // Uncompress data
         $data = gzinflate($data);
+
+        //echo $data . "\n";
       }
       catch(\Exception $exception)
       {
@@ -590,6 +585,9 @@
      */
     public function write($data)
     {
+
+      //echo  'Write: ' . $data . "\n";
+
       // Compress data
       $data = gzdeflate($data);
 
@@ -631,21 +629,16 @@
 
       while(!$this->terminate)
       {
-        // Check signal queue
-        if(count($this->signals) > 0)
-        {
-          $signals = $this->signals;
-          $this->signals = [];
-
-          // Handle signals in signal "queue"
-          foreach($signals as $key => $signal)
-            $this->handle($signal);
-        }
+        // Syscall select (on socket)
+        $this->listen();
 
         if($this->hasRunnable())
         {
           $runnable = $this->getRunnable();
           $runnable->run();
+
+          // Simulate a very long running task
+          //$this->nanosleep(10);
 
           // Reset idle timer
           $timer = time();
@@ -656,15 +649,38 @@
           // Update status to idle
           $this->setStatus(Runner::IDLE);
         }
-        else
-        {
-          time_nanosleep(0, 1000);
-
-          //pcntl_signal_dispatch();
-        }
       }
       
-      exit;
+      exit(0);
+    }
+
+    /**
+     * Sleep
+     *
+     * @param integer $seconds
+     * @param integer $milliseconds
+     * @param integer $microseconds
+     * @param integer $nanoseconds
+     * @return void
+     */
+    protected function nanosleep($seconds = 0, $milliseconds = 0, $microseconds = 0, $nanoseconds = 0)
+    {
+        // Convert milliseconds to nanoseconds
+        if($milliseconds > 0)
+            $nanoseconds = $nanoseconds + ($milliseconds * 1000000);
+
+        // Convert microseconds to nanoseconds
+        if($microseconds > 0)
+            $nanoseconds = $nanoseconds + ($microseconds * 1000);
+
+        // Init nanosleep
+        $nanosleep = array();
+        $nanosleep['seconds'] = $seconds;
+        $nanosleep['nanoseconds'] = $nanoseconds;
+
+        // Loop to avoid wakeup when other threads get interrupted
+        while(is_array($nanosleep))
+            $nanosleep = time_nanosleep($nanosleep['seconds'], $nanosleep['nanoseconds']);
     }
 
     public function output($output)

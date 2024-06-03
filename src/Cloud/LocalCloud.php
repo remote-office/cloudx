@@ -12,6 +12,7 @@ use CloudX\Messages\StatusMessage;
 use CloudX\Messages\LogMessage;
 use CloudX\Messages\KeepAliveMessage;
 use CloudX\Messages\CallbackMessage;
+use CloudX\TaskStack;
 
 /**
  * Class LocalCloud
@@ -26,6 +27,8 @@ class LocalCloud extends Cloud
 
     protected $signals = [];
 
+    protected $manager;
+
     /**
      * Construct a Cloud
      *
@@ -37,33 +40,108 @@ class LocalCloud extends Cloud
         // Set capacity
         $this->capacity = $capacity;
 
-        pcntl_async_signals(TRUE);
+        $this->manager = new Manager();
 
         // Install signalhandler on important POSIX signals
-        pcntl_signal(SIGUSR1, array($this, 'signal'));
         pcntl_signal(SIGCHLD, array($this, 'signal'));
         pcntl_signal(SIGTERM, array($this, 'signal'));
         pcntl_signal(SIGINT,  array($this, 'signal'));
         pcntl_signal(SIGHUP,  array($this, 'signal'));
     }
 
-    public function getManager()
-    {
-        return Manager::getInstance();
-    }
-
     /**
-     * Start this Cloud
-     *
+     * Process messages from runners (child threads)
+     * 
      * @param void
      * @return void
      */
-    public function start()
+    public function process()
     {
-        $manager = Manager::getInstance();
+        $manager = $this->getManager();
 
-        while($manager->getRunners()->sizeOf() < $this->capacity)
-            $manager->add($manager->create());
+        $runners = array();
+        $sockets = array();
+
+        foreach($manager->getRunners() as $runner)
+        {
+            if(is_object($runner->getSocket()))
+            {
+                // Add instance to lookup table
+                $runners[spl_object_hash($runner)] = $runner;
+                // Add socket to lookup table
+                $sockets[spl_object_hash($runner)] = $runner->getSocket();
+            }
+        }
+
+        // Zend engine limitation fix
+        $null = null;
+
+        //echo 'Socket select on ' . count($sockets) . ' sockets' . "\n";
+
+        if(count($sockets) > 0)
+        {
+            // Select
+            @socket_select($sockets, $null, $null, 0);
+
+            //echo 'Data is ready on ' . count($sockets) . ' sockets' . "\n";
+
+            foreach(array_keys($sockets) as $hash)
+            {
+                $runner = $runners[$hash];
+                $data = $runner->read();
+
+                if(!empty($data))
+                {
+                    //echo __METHOD__ . ' - ' . $data . "\n";
+
+                    // Unserialize Message
+                    $class = unserialize($data);
+
+                    if(in_array(Message::class, class_parents($class)))
+                    {
+                        // Get pid of message
+                        $pid = $class->getPid();
+
+                        if($class instanceof StatusMessage)
+                        {
+                            // Get status (Runner::STOPPED or Runner::IDLE)
+                            $status = $class->getStatus();
+
+                            // Update status
+                            $runner->setStatus($status);
+                        }
+                        elseif($class instanceof CallbackMessage)
+                        {
+                            // Get callable
+                            $callable = $class->getCallable();
+                            $parameters = $class->getParameters();
+
+                            // Call it
+                            call_user_func_array($callable, $parameters);
+                        }
+                        elseif($class instanceof KeepAliveMessage)
+                        {
+
+                        }
+                        elseif($class instanceof LogMessage)
+                        {
+                            $log = $class->getLog();
+
+                            echo '[' . date('Y/m/d H:i:s', time()) . '] -- Runner with pid ' . $runner->getPid() . ' (' . $log . ')' . "\n";
+                        }
+                    }
+                }
+                else
+                {
+                    //echo 'Data is empty' . "\n";
+                }
+            }
+        }
+    }
+
+    public function getManager()
+    {
+        return $this->manager;
     }
 
     /**
@@ -72,9 +150,9 @@ class LocalCloud extends Cloud
      * @param void
      * @return void
      */
-    public function stop()
+    protected function stop()
     {
-        $manager = Manager::getInstance();
+        $manager = $this->getManager();
 
         foreach($manager->getRunners() as $runner)
         {
@@ -89,15 +167,58 @@ class LocalCloud extends Cloud
     }
 
     /**
-     * Run a task
+     * Run tasks
      * 
-     * @param Task $task
+     * @param TaskStack $tasks
      * @return void
      */
-    public function run(Task $task)
+    public function run(TaskStack $tasks)
     {
-        $runner = $this->runner();
-        $runner->execute($task->getRunnable());
+        while($tasks->sizeOf() > 0)
+        {
+            // Process any messages
+            $this->process();
+
+            if($tasks->sizeOf() > 0)
+            {
+                if($this->available())
+                    $this->runner()->execute($tasks->pop()->getRunnable());
+                else
+                    $this->nanosleep(0, 100);
+            }
+        }
+        
+        // Stop running threads
+        $this->stop();
+    }
+
+    /**
+     * Sleep
+     *
+     * @param integer $seconds
+     * @param integer $milliseconds
+     * @param integer $microseconds
+     * @param integer $nanoseconds
+     * @return void
+     */
+    protected function nanosleep($seconds = 0, $milliseconds = 0, $microseconds = 0, $nanoseconds = 0)
+    {
+        // Convert milliseconds to nanoseconds
+        if($milliseconds > 0)
+            $nanoseconds = $nanoseconds + ($milliseconds * 1000000);
+
+        // Convert microseconds to nanoseconds
+        if($microseconds > 0)
+            $nanoseconds = $nanoseconds + ($microseconds * 1000);
+
+        // Init nanosleep
+        $nanosleep = array();
+        $nanosleep['seconds'] = $seconds;
+        $nanosleep['nanoseconds'] = $nanoseconds;
+
+        // Loop to avoid wakeup when other threads get interrupted
+        while(is_array($nanosleep))
+            $nanosleep = time_nanosleep($nanosleep['seconds'], $nanosleep['nanoseconds']);
     }
 
     /**
@@ -109,7 +230,7 @@ class LocalCloud extends Cloud
     protected function runner()  
     {
         // Get manager
-        $manager = Manager::getInstance();
+        $manager = $this->getManager();
 
         // Get runners
         $runners = $manager->getRunners();
@@ -136,7 +257,7 @@ class LocalCloud extends Cloud
     public function available()
     {
         // Get manager
-        $manager = Manager::getInstance();
+        $manager = $this->getManager();
 
         // Get runners
         $runners = $manager->getRunners();
@@ -157,15 +278,12 @@ class LocalCloud extends Cloud
             $runners->next();
         }
 
-        /*// When no runner is available and cloud runner limit is not reached add a runner
+        // When no runner is available and cloud runner limit is not reached add a runner
         if(!$available)
         {
             if($manager->getRunners()->sizeOf() < $this->capacity)
-            {
                 $manager->add($manager->create());
-                $available = true;
-            }
-        }*/
+        }
 
         return $available;
     }
@@ -184,95 +302,10 @@ class LocalCloud extends Cloud
         }
     }
 
-    /**
-     * Handle posix signals
-     *
-     * @param int $signal
-     * @return void
-     */
     public function handle($signal)
     {
-        //echo __METHOD__  . ' ' . $signal . "\n";
-
-        // Handle signal
         switch($signal)
         {
-            // Signal when a child has send a message
-            case SIGUSR1:
-            {
-                $manager = Manager::getInstance();
-
-                $runners = array();
-                $sockets = array();
-
-                foreach($manager->getRunners() as $runner)
-                {
-                    if(is_object($runner->getSocket()))
-                    {
-                        // Add instance to lookup table
-                        $runners[spl_object_hash($runner)] = $runner;
-                        // Add socket to lookup table
-                        $sockets[spl_object_hash($runner)] = $runner->getSocket();
-                    }
-                }
-
-                // Zend engine limitation fix
-                $null = null;
-
-                if(count($sockets) > 0)
-                {
-                    // Select
-                    @socket_select($sockets, $null, $null, 0);
-
-                    foreach(array_keys($sockets) as $hash)
-                    {
-                        $runner = $runners[$hash];
-                        $data = $runner->read();
-
-                        if(!empty($data))
-                        {
-                            // Unserialize Message
-                            $class = unserialize($data);
-
-                            if(in_array(Message::class, class_parents($class)))
-                            {
-                                // Get pid of message
-                                $pid = $class->getPid();
-
-                                if($class instanceof StatusMessage)
-                                {
-                                    // Get status (Runner::STOPPED or Runner::IDLE)
-                                    $status = $class->getStatus();
-
-                                    // Update status
-                                    $runner->setStatus($status);
-                                }
-                                elseif($class instanceof CallbackMessage)
-                                {
-                                    // Get callable
-                                    $callable = $class->getCallable();
-                                    $parameters = $class->getParameters();
-
-                                    // Call it
-                                    call_user_func_array($callable, $parameters);
-                                }
-                                elseif($class instanceof KeepAliveMessage)
-                                {
-
-                                }
-                                elseif($class instanceof LogMessage)
-                                {
-                                    $log = $class->getLog();
-
-                                    echo '[' . date('Y/m/d H:i:s', time()) . '] -- Runner with pid ' . $runner->getPid() . ' (' . $log . ')' . "\n";
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            break;
-
             // Handle signal child
             case SIGCHLD:
             {
@@ -298,11 +331,12 @@ class LocalCloud extends Cloud
             {
                 $manager = Manager::getInstance();
 
+                // Send a terminate command to the runners (instead of a posix kill)
                 foreach($manager->getRunners() as $runner)
                     posix_kill($runner->getPid(), $signal);
 
                 // Handle sigterm and sigint
-                exit();
+                exit(0);
             }
             break;
 
@@ -321,7 +355,6 @@ class LocalCloud extends Cloud
             break;
         }
     }
-
 
     /**
      * Handle posix signals
