@@ -2,24 +2,23 @@
 
   namespace CloudX\Messages;
 
-  use CloudX\Task;
+use CloudX\Task;
 
   /**
-   * Class RunnableMessage
+   * Class DataMessage
    *
    * @author David Betgen <code@platform-x.dev>
    * @version 1.0
    */
-  class RunnableMessage extends Message
+  class DataMessage extends Message
   {
     protected $task;
 
     /**
-     * Constuct a RunnableMessage
+     * Constuct a DataMessage
      *
      * @param integer $pid
-     * @param Task $task
-     * @return RunnableMessage
+     * @return DataMessage
      */
     public function __construct($pid, Task $task)
     {
@@ -33,7 +32,7 @@
       return $this->task;
     }
 
-    public function setTask(Task $task)
+    public function setTask($task)
     {
       $this->task = $task;
     }

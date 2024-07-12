@@ -12,7 +12,7 @@
    */
   class Manager
   {
-    protected $runners;
+    protected $workers;
 
     protected static $instance;
 
@@ -38,80 +38,50 @@
      */
     public function __construct()
     {
-      $this->setRunners(new Hashtable());
+      $this->setWorkers(new Hashtable());
     }
 
     /**
-     * Get runners of this Manager
+     * Get workers of this Manager
      *
      * @param void
      * @return LibXHashtable
      */
-    public function getRunners()
+    public function getWorkers()
     {
-      return $this->runners;
+      return $this->workers;
     }
 
     /**
-     * Set runners of this Manager
+     * Set workers of this Manager
      *
-     * @param Hashtable $runners
+     * @param Hashtable $workers
      * @return void
      */
-    public function setRunners(Hashtable $runners)
+    public function setWorkers(Hashtable $workers)
     {
-      $this->runners = $runners;
+      $this->workers = $workers;
     }
 
     /**
-     * Add an Runner to this Manager
+     * Add an Worker to this Manager
      *
-     * @param Runner $runner
+     * @param AbstractWorker $worker
      * @return void
      */
-    public function add(Runner $runner)
+    public function add(AbstractWorker $worker)
     {
-      $this->getRunners()->set(spl_object_hash($runner), $runner);
+      $this->getWorkers()->set(spl_object_hash($worker), $worker);
     }
 
     /**
-     * Remove a Runner from this Manager
+     * Remove a Worker from this Manager
      *
-     * @param Runner $runner
+     * @param AbstractWorker $worker
      * @return void
      */
-    public function remove(Runner $runner)
+    public function remove(AbstractWorker $worker)
     {
-      $this->getRunners()->delete(spl_object_hash($runner));
-    }
-
-    public function create()
-    {
-      // Create a new Runner
-      $runner = new Runner();
-
-      if($runner->getParentPid() == 0)
-      {
-        /**
-         * Parent process
-         */
-
-        // Return runner
-        return $runner;
-      }
-      else
-      {
-        /**
-         * Child process
-         */
-
-        // Idle mode (await messages)
-        $runner->idle();
-      }
-    }
-
-    public function destroy()
-    {
-
+      $this->getWorkers()->delete(spl_object_hash($worker));
     }
   }
